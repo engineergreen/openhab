@@ -8,8 +8,8 @@
  */
 package org.openhab.binding.cm11a;
 
+import org.openhab.binding.cm11a.internal.modules.AbstractX10Module;
 import org.openhab.core.binding.BindingProvider;
-import org.openhab.core.items.Item;
 
 /**
  * @author Anthony Green
@@ -21,5 +21,5 @@ public interface CM11ABindingProvider extends BindingProvider {
 	 * @param item
 	 * @return
 	 */
-	public String getDeviceCode(String itemName);
+	public AbstractX10Module getModule(String itemName);
 }

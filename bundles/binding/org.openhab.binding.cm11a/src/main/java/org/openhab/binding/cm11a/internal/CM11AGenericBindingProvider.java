@@ -9,7 +9,9 @@
 package org.openhab.binding.cm11a.internal;
 
 import org.openhab.binding.cm11a.CM11ABindingProvider;
-import org.openhab.core.binding.BindingConfig;
+import org.openhab.binding.cm11a.internal.modules.AbstractX10Module;
+import org.openhab.binding.cm11a.internal.modules.ApplianceModule;
+import org.openhab.binding.cm11a.internal.modules.LampModule;
 import org.openhab.core.items.Item;
 import org.openhab.core.library.items.DimmerItem;
 import org.openhab.core.library.items.SwitchItem;
@@ -55,27 +57,28 @@ public class CM11AGenericBindingProvider extends AbstractGenericBindingProvider 
 	@Override
 	public void processBindingConfiguration(String context, Item item, String bindingConfig) throws BindingConfigParseException {
 		super.processBindingConfiguration(context, item, bindingConfig);
-		CM11ABindingConfig config = new CM11ABindingConfig();
+		AbstractX10Module module;
 		
 		if (X10Interface.validateAddress(bindingConfig)){
-			config.deviceCode = bindingConfig;
-			addBindingConfig(item, config);
-			logger.debug("Succesfully added item: " + item.getName() + " for X10 device: " + config.deviceCode);
+			if (item instanceof DimmerItem) {
+				module = new LampModule(bindingConfig);
+			} else {
+				module = new ApplianceModule(bindingConfig); 
+			}
+			addBindingConfig(item, module);
+			logger.debug("Succesfully added item: " + item.getName() + " for X10 module: " + module.getAddress());
 		} else {
 			throw new BindingConfigParseException("Invalid X10 Device code for item: " + item.getName() + " in " + context);
 		}		
 	}
 	
 	
-	class CM11ABindingConfig implements BindingConfig {
-		String deviceCode;
-	}
 
 
 	
 	@Override
-	public String getDeviceCode(String itemName) {
-		return ((CM11ABindingConfig) bindingConfigs.get(itemName)).deviceCode;
+	public AbstractX10Module getModule(String itemName) {
+		return ((AbstractX10Module) bindingConfigs.get(itemName));
 	}
 	
 	

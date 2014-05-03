@@ -13,9 +13,8 @@ import gnu.io.NoSuchPortException;
 import java.util.Dictionary;
 
 import org.openhab.binding.cm11a.CM11ABindingProvider;
+import org.openhab.binding.cm11a.internal.modules.AbstractX10Module;
 import org.openhab.core.binding.AbstractBinding;
-import org.openhab.core.library.types.IncreaseDecreaseType;
-import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.osgi.service.cm.ConfigurationException;
@@ -51,6 +50,7 @@ public class CM11ABinding extends AbstractBinding<CM11ABindingProvider> implemen
 				//Nothing to do, error logged elsewhere.
 			}
 		}
+		logger.debug("CM11A Binding has been activated");
 	}
 
 	public void deactivate() {
@@ -58,9 +58,13 @@ public class CM11ABinding extends AbstractBinding<CM11ABindingProvider> implemen
 			x10iface.close();
 			x10iface = null;
 		}
+		logger.debug("CM11A Binding has been deactivated");
 	}
 
 	protected void initialise () throws ConfigurationException {
+		if (x10iface != null) {
+			deactivate();
+		}
 		try {
 			x10iface = new X10Interface(serialPort);
 			x10iface.setDaemon(true);
@@ -86,22 +90,9 @@ public class CM11ABinding extends AbstractBinding<CM11ABindingProvider> implemen
 		
 		for (CM11ABindingProvider provider : this.providers) {
 			if (provider.providesBindingFor(itemName)) {
-				String deviceCode = provider.getDeviceCode(itemName);
-				
-				if (OnOffType.ON.equals(command)){
-					logger.debug("Queuing X10 command for device " + deviceCode + " ON");
-					x10iface.queueFunction(deviceCode, X10Interface.FUNC_ON);
-				} else if (OnOffType.OFF.equals(command)){
-					logger.debug("Queuing X10 command for device " + deviceCode + " OFF");
-					x10iface.queueFunction(deviceCode, X10Interface.FUNC_OFF);
-				} else if (IncreaseDecreaseType.INCREASE.equals(command)) {
-					logger.debug("Queuing X10 command for device " + deviceCode + " BRIGHT");
-					x10iface.queueFunction(deviceCode, X10Interface.FUNC_BRIGHT,1);
-				} else if (IncreaseDecreaseType.DECREASE.equals(command)) {
-					logger.debug("Queuing X10 command to turn device " + deviceCode + " DIM");
-					x10iface.queueFunction(deviceCode, X10Interface.FUNC_DIM,0);
-				}
-				
+				AbstractX10Module deviceForCommand = provider.getModule(itemName);
+				deviceForCommand.processCommand(command);
+				x10iface.scheduleHWUpdate(deviceForCommand);
 			}
 		}
 		
@@ -124,7 +115,7 @@ public class CM11ABinding extends AbstractBinding<CM11ABindingProvider> implemen
 	@Override
 	public void updated(Dictionary<String, ?> config) throws ConfigurationException {
 		if (config != null) {
-			if (config.get("serialPort") != serialPort) {
+			if (!config.get("serialPort").equals(serialPort)) {
 				logger.debug("New configuration string received: " + config.get("serialPort"));
 				deactivate();
 				serialPort = (String) config.get("serialPort");

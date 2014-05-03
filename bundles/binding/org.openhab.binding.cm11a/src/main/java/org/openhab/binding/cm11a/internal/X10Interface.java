@@ -21,6 +21,7 @@ import java.util.TooManyListenersException;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 
+import org.openhab.binding.cm11a.internal.modules.AbstractX10Module;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,29 +31,29 @@ import org.slf4j.LoggerFactory;
  * 
  * @author anthony
  * @see <a href="http://www.heyu.org/docs/protocol.txt">CM11 Protocol specification</a>
- * @see <a href="http://www.rxtx.org">RXTX Serial API for JavaM</a>
+ * @see <a href="http://www.rxtx.org">RXTX Serial API for Java</a>
  */
 public class X10Interface extends Thread implements SerialPortEventListener  {
 
 	private static final Logger log = LoggerFactory.getLogger(X10Interface.class);
 
 	// X10 Function codes
-	static final int FUNC_ALL_UNITS_OFF = 0x0;
-	static final int FUNC_ALL_LIGHTS_ON = 0x1;
-	static final int FUNC_ON = 0x2;
-	static final int FUNC_OFF = 0x3;
-	static final int FUNC_DIM = 0x4;
-	static final int FUNC_BRIGHT = 0x5;
-	static final int FUNC_ALL_LIGHTS_OFF = 0x6;
-	static final int FUNC_EXTENDED = 0x7;
-	static final int FUNC_HAIL_REQ = 0x8;
-	static final int FUNC_HAIL_ACK = 0x9;
-	static final int FUNC_PRESET_DIM_1 = 0xA;
-	static final int FUNC_PRESET_DIM_2 = 0xB;
-	static final int FUNC_EXT_DATA_TRANSFER = 0xC;
-	static final int FUNC_STATUS_ON = 0xD;
-	static final int FUNC_STATUS_OFF = 0xE;
-	static final int FUNC_STATUS_REQ = 0xF;
+	public static final int FUNC_ALL_UNITS_OFF = 0x0;
+	public static final int FUNC_ALL_LIGHTS_ON = 0x1;
+	public static final int FUNC_ON = 0x2;
+	public static final int FUNC_OFF = 0x3;
+	public static final int FUNC_DIM = 0x4;
+	public static final int FUNC_BRIGHT = 0x5;
+	public static final int FUNC_ALL_LIGHTS_OFF = 0x6;
+	public static final int FUNC_EXTENDED = 0x7;
+	public static final int FUNC_HAIL_REQ = 0x8;
+	public static final int FUNC_HAIL_ACK = 0x9;
+	public static final int FUNC_PRESET_DIM_1 = 0xA;
+	public static final int FUNC_PRESET_DIM_2 = 0xB;
+	public static final int FUNC_EXT_DATA_TRANSFER = 0xC;
+	public static final int FUNC_STATUS_ON = 0xD;
+	public static final int FUNC_STATUS_OFF = 0xE;
+	public static final int FUNC_STATUS_REQ = 0xF;
 
 	// Definitions for the header:code bits
 	/**
@@ -97,7 +98,24 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 	static final int DATA_READY_REQ = 0x5a;
 	static final int DATA_READY_HEAD = 0xc3;
 
+	/**
+	 * This command is purely intended for the CP10.  
+	 * The power-strip contains an input filter and electrical surge protection
+	 * that is monitored by the microcontroller. If this protection should
+	 * become compromised (i.e. resulting from a lightening strike) the
+	 * interface will attempt to wake the computer with a 'filter-fail poll'. 
+	 */
+	static final int INPUT_FILTER_FAIL_REQ = 0xf3;
+	static final int INPUT_FILTER_FAIL_HEAD = 0xf3;
+	
+	/**
+	 * Byte sent from PC to interface to enable interface feature that brings serial port RI high when 
+	 * data arrives to send to PC 
+	 */
+	static final int RI_ENABLE = 0xeb;
+	static final int RI_DISABLE = 0x55;
 
+	
 	/** 
 	 * THe house code to be monitored.  Not sure what this means, but it is part of the clock set instruction.
 	 * For the moment hardcoded here to be House 'E'.
@@ -183,7 +201,7 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 	/**
 	 * Queue of as-yet un-actioned requests.
 	 */
-	protected BlockingQueue<X10FunctionCall> callQueue = new ArrayBlockingQueue<X10FunctionCall>(256);
+	protected BlockingQueue<AbstractX10Module> deviceUpdateQueue = new ArrayBlockingQueue<AbstractX10Module>(256);
 
 	/**
 	 * 
@@ -209,7 +227,7 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 			}
 			log.debug("Connecting to X10 hardware on serial port: " + portId.getName());
 			try {
-				serialPort = (SerialPort) portId.open("ChocoX10 Interface", IO_PORT_OPEN_TIMEOUT);
+				serialPort = (SerialPort) portId.open("Openhab CM11A Binding", IO_PORT_OPEN_TIMEOUT);
 				serialPort.setSerialPortParams(4800, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE);
 				serialPort.setFlowControlMode(SerialPort.FLOWCONTROL_NONE);
 				
@@ -224,7 +242,6 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 				
 				serialPort.notifyOnDataAvailable(true);
 				serialPort.notifyOnRingIndicator(true);
-				purgeInputStream();
 
 			} catch (PortInUseException e) {
 				log.error("Serial port " + portId.getName() + " is in use by another application (" +  e.currentOwner + ")");
@@ -245,7 +262,7 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 
 
 	/**
-	 * Tranmits a standard (non-extended) X10 function.
+	 * Transmits a standard (non-extended) X10 function.
 	 * 
 	 * @param address
 	 * @param function
@@ -254,11 +271,7 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 	 * @throws InvalidAddressException 
 	 * @throws IOException 
 	 */
-	public void sendFunction(X10FunctionCall functionCall) throws InvalidAddressException, IOException{
-
-		String address = functionCall.address;
-		int function = functionCall.command;
-		int dims = functionCall.dims;
+	public void sendFunction(String address, int function, int dims) throws InvalidAddressException, IOException{
 		
 		if (!validateAddress(address)) {
 			throw new InvalidAddressException("Address " + address + " is not a valid X10 address");
@@ -312,30 +325,28 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 	 * @throws InvalidAddressException 
 	 * @throws IOException 
 	 */
-	public void queueFunction(String address, int function) {
-		queueFunction(address, function, (int)0);
+	public void sendFunction(String address, int function) throws InvalidAddressException, IOException {
+		sendFunction(address, function, (int)0);
 	}
-
+	
+	
 	/**
-	 * Queues a standard (non-extended) X10 function for transmission.
+	 * Add specified device into the queue for hardware updates.  
 	 * 
-	 * @param address
-	 * @param function
-	 * @param dims
-	 * @return 
-	 * @throws InvalidAddressException 
-	 * @throws IOException 
+	 *  <p>If device is already queued, it will be removed from queue and moved to the end.</p>
+	 * @param device
 	 */
-	public void queueFunction(String address, int function, int dims) { 
-		if (!callQueue.offer(new X10FunctionCall(address, function, dims))) {
+	public void scheduleHWUpdate (AbstractX10Module device) {
+		deviceUpdateQueue.remove(device);
+		if (!deviceUpdateQueue.offer(device)) {
 			log.error("X10 function call queue full.  Too many outstanding commands.  This command will be discarded");
-		}
+		} 
 	}
 	
 	/**
 	 * Sends data to the hardware and handles the checksuming and retry process.
 	 * 
-	 * <p>When applicanble, method blocks until the data has actually been sent over the powerlines using X10</p>
+	 * <p>When applicable, method blocks until the data has actually been sent over the powerlines using X10</p>
 	 * 
 	 * @param data Data to be sent.
 	 * @throws IOException 
@@ -369,14 +380,14 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 				log.trace("Attempted to send data, try number: " + retryCount + 
 						" Checksum expected: " + Integer.toHexString(calcChecksum) + " received: " + Integer.toHexString(checksumResponse));
 
-				// On initial device power up, nothing works until we set the clock.  Check to see if that is what
-				// is stopping the transmission.
-				if (checksumResponse == CLOCK_SET_REQ){
-					setClock();
-				}
-				if (retryCount > IO_MAX_SEND_RETRY_COUNT){
-					log.error("Failed to send data to X10 hardware due to too many checksum failures");
-					throw new IOException ("Max retries exceeded");
+				if (checksumResponse != calcChecksum) {
+					// On initial device power up, nothing works until we set the clock.  Check to see if the unexpected data was actually a request from interface to PC.
+					processRequestFromIFace(checksumResponse);
+				
+					if (retryCount > IO_MAX_SEND_RETRY_COUNT){
+						log.error("Failed to send data to X10 hardware due to too many checksum failures");
+						throw new IOException ("Max retries exceeded");
+					}
 				}
 			}
 
@@ -403,24 +414,24 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 		log.trace("Starting background thread...");
 		while(killThread == false){
 			try {
-				X10FunctionCall nextCall;
-				log.trace("Getting next function call to be made");
-				nextCall = callQueue.take();
-				log.trace("Got a call.  Going to run it.");
+				AbstractX10Module nextModule;
+				log.trace("Getting next module to be updated");
+				nextModule = deviceUpdateQueue.take();
+				log.trace("Got a device.  Going to run it.");
 
 				// Keep retrying to update this device until it is successful.
 				boolean success = false;
 				while (!success){
 					try {
 						if (connect()){
-							sendFunction(nextCall);
+							nextModule.updateHardware(this);
 							success = true;
 						} else {
 							Thread.sleep(IO_RECONNECT_INTERVAL);
 						}
 					} catch (IOException e) {
 						connected = false;
-						log.error("IO Exception when updating device.  Will retry shortly");
+						log.error("IO Exception when updating module hardware.  Will retry shortly");
 						Thread.sleep(IO_RECONNECT_INTERVAL);
 					} catch (InvalidAddressException e) {
 						log.error("Attempted to send an X10 Function call with invalid address.  Ignoring this.");
@@ -438,8 +449,39 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 
 	public void serialEvent(SerialPortEvent event) {
 		try {	
-			if (event.getEventType() == event.DATA_AVAILABLE || event.getEventType() == event.RI){
-				purgeInputStream();
+			if (event.getEventType() == SerialPortEvent.DATA_AVAILABLE || event.getEventType() == SerialPortEvent.RI){
+				synchronized (serialPort) {
+					
+					log.trace("Serial port data available or RI indicator event received");
+					while (serialPort.isRI() && serialInput.available() <= 0){
+						log.trace("Ring indicator is High but there is no data.  Waiting for data...");
+						try {
+							Thread.sleep(20);
+						} catch (InterruptedException e) {
+							log.warn("Interrupted while sleeping",e);
+						}
+					}
+					
+					while (serialInput.available() > 0 ){
+						log.trace(serialInput.available() + " bytes of data available to be read");
+						int readint = serialInput.read();
+
+						processRequestFromIFace(readint);
+						
+						// Wait a while before rechecking to give interface time to switch off Ring Indicator.
+						while (serialPort.isRI() && serialInput.available() <= 0){
+							log.trace("Ring indicator is High but there is no data.  Waiting for data...");
+							try {
+								Thread.sleep(300);
+							} catch (InterruptedException e) {
+								// TODO Auto-generated catch block
+								e.printStackTrace();
+							}
+						}
+					}
+					log.trace("Reading data from interface complete.  Ring Indicator has cleared and no data is left to read.");
+
+				}
 			}
 		} catch (IOException e) {
 			log.error("IO Exception in serial port handler callback: " + e.getMessage());
@@ -448,53 +490,32 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 
 	protected void purgeInputStream() throws IOException{
 
-		synchronized (serialPort) {
-			
-			log.trace("Purging input stream");
-			while (serialPort.isRI() && serialInput.available() <= 0){
-				log.trace("Ring indicator is High but there is no data.  Waiting for data...");
-				try {
-					Thread.sleep(300);
-				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-			}
-
-			log.trace("Purge:  getting data..");
+		
 
 
+	}
 
-			while (serialInput.available() > 0 ){
-				int readint = serialInput.read();
-
-				switch (readint){
-				case CLOCK_SET_REQ:
-					setClock();
-					break;
-				case DATA_READY_REQ:
-					receiveData();
-					break;
-				default:
-					log.warn("Unexpected data received from X10 interface: " + Integer.toHexString(readint));
-				}
-				
-				// Wait a while before rechecking to give interface time to switch of Ring Indicator.
-				while (serialPort.isRI() && serialInput.available() <= 0){
-					log.trace("Ring indicator is High but there is no data.  Waiting for data...");
-					try {
-						Thread.sleep(300);
-					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
-				}
-			}
-			log.trace("Purging input stream complete.  Ring Indicator has cleared and no data is left to read.");
-
+	/**
+	 * Processes a request made from the interface to the PC.  Only handles requests initiated by the interface,
+	 * not those that form part of a conversation triggered by the PC.
+	 * @param readint
+	 * @throws IOException
+	 */
+	protected void processRequestFromIFace(int readint) throws IOException {
+		switch (readint){
+		case CLOCK_SET_REQ:
+			setClock();
+			break;
+		case DATA_READY_REQ:
+			receiveData();
+			break;
+		case INPUT_FILTER_FAIL_REQ:
+			serialOutput.write(DATA_READY_HEAD);
+			log.warn("X10 Interface has indicated that the filter and/or surge protection in the device has failed.");
+			break;
+		default:
+			log.warn("Unexpected data received from X10 interface: " + Integer.toHexString(readint));
 		}
-
-
 	}
 
 	/**
@@ -553,9 +574,26 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 		} catch (InterruptedException e) {
 			// Nothing to do.
 		}
+		if (serialInput != null) {
+			try {
+				serialInput.close();
+			} catch (IOException e) {
+				// oOthing to do if there is an issue closing the stream.
+			}
+		}
+		if (serialOutput != null) {
+			try {
+				serialOutput.close();
+			} catch (IOException e) {
+				// oOthing to do if there is an issue closing the stream.
+			}
+		}
+		
 		if (serialPort != null) {
 			serialPort.close();
 		}
 	}
+	
+	
 
 }
