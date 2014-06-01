@@ -248,7 +248,7 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 			} catch (UnsupportedCommOperationException e) {
 				log.error("Serial port " + portId.getName() + " doesn't support the required baud/parity/stopbits");
 			} catch (IOException e) {
-				log.error("IO Problem with serial port " + portId.getName() + ".  " + e.getMessage());
+				log.error("IO Problem with serial port " + portId.getName() + ".  " + e.getMessage(),e);
 			} catch (TooManyListenersException e) {
 				log.error("TooManyListeners error when trying to connect to serial port.  Interface is unlikely to work, raise a bug report.",e);
 			}
@@ -431,7 +431,7 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 						}
 					} catch (IOException e) {
 						connected = false;
-						log.error("IO Exception when updating module hardware.  Will retry shortly");
+						log.error("IO Exception when updating module hardware.  Will retry shortly",e);
 						Thread.sleep(IO_RECONNECT_INTERVAL);
 					} catch (InvalidAddressException e) {
 						log.error("Attempted to send an X10 Function call with invalid address.  Ignoring this.");
