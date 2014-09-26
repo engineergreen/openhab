@@ -6,7 +6,7 @@
 	<parent>
 		<groupId>org.openhab.bundles</groupId>
 		<artifactId>persistence</artifactId>
-		<version>1.5.0-SNAPSHOT</version>
+		<version>1.6.0-SNAPSHOT</version>
 	</parent>
 
 	<name>openHAB mongodb Persistence</name>
@@ -15,7 +15,7 @@
 		<bundle.symbolicName>org.openhab.persistence.mongodb</bundle.symbolicName>
 		<bundle.namespace>org.openhab.persistence.mongodb</bundle.namespace>
 		<deb.name>openhab-addon-persistence-mongodb</deb.name>
-		<deb.description>${name}</deb.description>
+		<deb.description>${project.name}</deb.description>
 	</properties>
 
 	<modelVersion>4.0.0</modelVersion>
