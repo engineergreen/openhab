@@ -12,7 +12,7 @@
 <feature
       id="org.openhab.designer.feature"
       label="openHAB Designer"
-      version="1.6.0.qualifier"
+      version="1.7.0.qualifier"
       provider-name="openHAB.org"
       plugin="org.openhab.designer.core">
 
@@ -314,6 +314,13 @@
          unpack="false"/>
 
    <plugin
+         id="org.openhab.action.squeezebox"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="false"/>
+
+   <plugin
          id="org.openhab.action.twitter"
          download-size="0"
          install-size="0"
@@ -329,6 +336,13 @@
 
    <plugin
          id="org.openhab.action.xmpp"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="false"/>
+
+   <plugin
+         id="org.openhab.action.xpl"
          download-size="0"
          install-size="0"
          version="0.0.0"

@@ -28,7 +28,6 @@ import org.openhab.core.library.items.ContactItem;
 import org.openhab.core.library.items.DimmerItem;
 import org.openhab.core.library.items.NumberItem;
 import org.openhab.core.library.items.RollershutterItem;
-import org.openhab.core.library.items.StringItem;
 import org.openhab.core.library.items.SwitchItem;
 import org.openhab.core.types.Command;
 import org.slf4j.Logger;
@@ -73,6 +72,8 @@ public class ZWaveConverterHandler {
 		converters.put(CommandClass.METER, new ZWaveMeterConverter(controller, eventPublisher));
 		converters.put(CommandClass.BASIC, new ZWaveBasicConverter(controller, eventPublisher));
 		converters.put(CommandClass.SCENE_ACTIVATION, new ZWaveSceneConverter(controller, eventPublisher));
+		converters.put(CommandClass.ALARM, new ZWaveAlarmConverter(controller, eventPublisher));
+
 		infoConverter = new ZWaveInfoConverter(controller, eventPublisher);
 		
 		// add preferred command classes per Item class here
@@ -108,41 +109,21 @@ public class ZWaveConverterHandler {
 	 * @return the {@link ZWaveCommandClass} that can be used to get a converter suitable to do the conversion.
 	 */
 	private ZWaveCommandClass resolveConverter(Item item, ZWaveNode node, int endpointId) {
-		if(item == null)
+		if(item == null) {
 			return null;
-
-		ZWaveMultiInstanceCommandClass multiInstanceCommandClass = null;
-		ZWaveCommandClass result = null;
-		
-		if (endpointId != 1)
-			multiInstanceCommandClass = (ZWaveMultiInstanceCommandClass)node.getCommandClass(CommandClass.MULTI_INSTANCE);
+		}
 
 		if (!preferredCommandClasses.containsKey(item.getClass())) {
 			logger.warn("No preferred command classes found for item class = {}", item.getClass().toString());
 			return null;
 		}
-		
+
 		for (CommandClass commandClass : preferredCommandClasses.get(item.getClass())) {
-			if (multiInstanceCommandClass != null && multiInstanceCommandClass.getVersion() == 2) {
-				ZWaveEndpoint endpoint = multiInstanceCommandClass.getEndpoint(endpointId);
-				
-				if (endpoint != null) { 
-					result = endpoint.getCommandClass(commandClass);
-				} 
-			}
+			ZWaveCommandClass result = node.resolveCommandClass(commandClass, endpointId);
 			
-			if (result == null)
-				result = node.getCommandClass(commandClass);
-			
-			if (result == null)
-				continue;
-			
-			if (multiInstanceCommandClass != null && multiInstanceCommandClass.getVersion() == 1 &&
-					result.getInstances() < endpointId)
-				continue;
-			
-			if (converters.containsKey(commandClass))
+			if (result != null && converters.containsKey(commandClass)) {
 				return result;
+			}
 		}
 		
 		logger.warn("No matching command classes found for item class = {}, node id = {}, endpoint id = {}", 
@@ -304,24 +285,26 @@ public class ZWaveConverterHandler {
 
 		logger.trace("Getting converter for item = {}, command class = {}, item command class = {}", itemName, event.getCommandClass().getLabel(), commandClassName);
 		
-		if (item == null)
+		if (item == null) {
 			return;
+		}
 		
 		// check whether this item is bound to the right command class.
 		
 		if (commandClassName != null && !commandClassName.equalsIgnoreCase(event.getCommandClass().getLabel().toLowerCase()) &&
-				!(respondToBasic && event.getCommandClass() == CommandClass.BASIC)) 
+				!(respondToBasic && event.getCommandClass() == CommandClass.BASIC)) {
 			return;
+		}
 		
-		 ZWaveCommandClassConverter<?> converter = this.getConverter(event.getCommandClass());
+		ZWaveCommandClassConverter<?> converter = this.getConverter(event.getCommandClass());
 		 
 		 
-		 if (converter == null) {
-			 logger.warn("No converter found for command class = {}, ignoring event.",event.getCommandClass().toString());
-			 return;
-		 }
+		if (converter == null) {
+			logger.warn("No converter found for command class = {}, ignoring event.",event.getCommandClass().toString());
+			return;
+		}
 		 
-		 converter.handleEvent(event, item, bindingConfiguration.getArguments());
+		converter.handleEvent(event, item, bindingConfiguration.getArguments());
 	 }
 	
 	/**
