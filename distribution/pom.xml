@@ -641,6 +641,12 @@
 		</dependency>
 		<dependency>
 			<groupId>org.openhab.binding</groupId>
+			<artifactId>org.openhab.binding.cm11a</artifactId>
+			<version>${project.version}</version>
+			<type>jar</type>
+		</dependency>
+		<dependency>
+			<groupId>org.openhab.binding</groupId>
 			<artifactId>org.openhab.binding.ihc</artifactId>
 			<version>${project.version}</version>
 			<type>jar</type>
