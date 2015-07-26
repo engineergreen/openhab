@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2014, openHAB.org and others.
+ * Copyright (c) 2010-2015, openHAB.org and others.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -15,26 +15,30 @@ import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Dictionary;
 
 import org.apache.commons.lang.StringUtils;
 import org.openhab.binding.maxcube.MaxCubeBindingProvider;
+import org.openhab.binding.maxcube.internal.exceptions.IncompleteMessageException;
+import org.openhab.binding.maxcube.internal.exceptions.IncorrectMultilineIndexException;
+import org.openhab.binding.maxcube.internal.exceptions.MessageIsWaitingException;
+import org.openhab.binding.maxcube.internal.exceptions.NoMessageAvailableException;
+import org.openhab.binding.maxcube.internal.exceptions.UnprocessableMessageException;
+import org.openhab.binding.maxcube.internal.exceptions.UnsupportedMessageTypeException;
 import org.openhab.binding.maxcube.internal.message.C_Message;
 import org.openhab.binding.maxcube.internal.message.Configuration;
 import org.openhab.binding.maxcube.internal.message.Device;
 import org.openhab.binding.maxcube.internal.message.DeviceInformation;
-import org.openhab.binding.maxcube.internal.message.H_Message;
 import org.openhab.binding.maxcube.internal.message.HeatingThermostat;
 import org.openhab.binding.maxcube.internal.message.L_Message;
 import org.openhab.binding.maxcube.internal.message.M_Message;
 import org.openhab.binding.maxcube.internal.message.Message;
+import org.openhab.binding.maxcube.internal.message.MessageProcessor;
 import org.openhab.binding.maxcube.internal.message.MessageType;
 import org.openhab.binding.maxcube.internal.message.S_Command;
 import org.openhab.binding.maxcube.internal.message.S_Message;
 import org.openhab.binding.maxcube.internal.message.ShutterContact;
 import org.openhab.binding.maxcube.internal.message.ThermostatModeType;
-import org.openhab.binding.maxcube.internal.message.WallMountedThermostat;
 import org.openhab.core.binding.AbstractActiveBinding;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
@@ -70,6 +74,17 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 	 * http://www.elv.de/controller.aspx?cid=824&detail=10&detail2=3484
 	 */
 	private static int port = 62910;
+
+	/**
+	 * Duty cycle of the cube
+	 */
+	private int dutyCycle = 0;
+
+	/**
+	 * The available memory slots of the cube
+	 */
+
+	private int freeMemorySlots;
 
 	/** The refresh interval which is used to poll given MAX!Cube */
 	private static long refreshInterval = 10000;
@@ -110,6 +125,12 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 	private BufferedReader reader = null;
 	private OutputStreamWriter writer = null;
 	
+	
+	/**
+	 * Processor that handles lines received from MAX!Cube
+	 */
+	MessageProcessor messageProcessor = new MessageProcessor();
+	
 	/**
 	 * {@inheritDoc}
 	 */
@@ -137,35 +158,29 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 	
 	@Override
 	public void deactivate() {
-		if(socket!=null) {
-			try {
-				socket.close();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-			}
-			socket = null;
-		}
+		socketClose();
 	}
 
 	/**
 	 * {@inheritDoc}
 	 */
 	@Override
-	public void execute() {
+	public synchronized void execute() {
 		if (ip == null) {
 			logger.debug("Update prior to completion of interface IP configuration");
 			return;
 		}
 		try {
 			String raw = null;
-			if(socket == null) {
-				this.socketConnect();
-			}if(maxRequestsPerConnection > 0 && requestCount >= maxRequestsPerConnection) {
+			if(maxRequestsPerConnection > 0 && requestCount >= maxRequestsPerConnection) {
 				logger.debug("maxRequestsPerConnection reached, reconnecting.");
 				socket.close();
 				this.socketConnect();
-				requestCount = 0;
-			}else {
+			}
+			if(socket == null) {
+				this.socketConnect();
+			}
+			else {
 			
 				/* if the connection is already open (this happens in exclusive mode), just send a "l:\r\n" to get the latest live informations
 				 * note that "L:\r\n" or "l:\n" would not work.
@@ -183,14 +198,20 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 					cont = false;
 					continue;
 				}
-
-				Message message;
+				
+				Message message = null;
 				try {
-					message = processRawMessage(raw);
-
+					this.messageProcessor.addReceivedLine(raw);
+					if (this.messageProcessor.isMessageAvailable()) {
+						message = this.messageProcessor.pull();
+					} else {
+						continue;
+					}
+					
 					message.debug(logger);
 
 					if (message != null) {
+						message.debug(logger);
 						if (message.getType() == MessageType.M) {
 							M_Message msg = (M_Message) message;
 							for (DeviceInformation di : msg.devices) {
@@ -226,7 +247,7 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 								c.setValues((C_Message) message);
 							}
 						} else if (message.getType() == MessageType.S) {
-							/** TODO: Implement handling of S: messages for proper command SET confirmation*/
+							sMessageProcessing((S_Message)message);
 							cont=false;
 						} else if (message.getType() == MessageType.L) {
 							((L_Message) message).updateDevices(devices, configurations);
@@ -241,14 +262,32 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 							cont = false;
 						}
 					}
+				} catch (IncorrectMultilineIndexException ex) {
+					logger.info("Incorrect MAX!Cube multiline message detected. Stopping processing and continue with next Line.");
+					this.messageProcessor.reset();
+				} catch (NoMessageAvailableException ex) {
+					logger.info("Could not process MAX!Cube message. Stopping processing and continue with next Line.");
+					this.messageProcessor.reset();
+				} catch (IncompleteMessageException ex) {
+					logger.info("Error while parsing MAX!Cube multiline message. Stopping processing, and continue with next Line.");
+					this.messageProcessor.reset();
+				} catch (UnprocessableMessageException ex) {
+					logger.info("Error while parsing MAX!Cube message. Stopping processing, and continue with next Line.");
+					this.messageProcessor.reset();
+				} catch (UnsupportedMessageTypeException ex) {
+					logger.info("Unsupported MAX!Cube message detected. Ignoring and continue with next Line.");
+					this.messageProcessor.reset();
+				} catch (MessageIsWaitingException ex) {
+					logger.info("There was and unhandled message waiting. Ignoring and continue with next Line.");
+					this.messageProcessor.reset();
 				} catch (Exception e) {
 					logger.info("Failed to process message received by MAX! protocol.");
 					logger.debug(Utils.getStackTrace(e));
+					this.messageProcessor.reset();
 				}
 			}
 			if(!exclusive) {
-				socket.close();
-				socket = null;
+				socketClose();
 			}
 
 			for (MaxCubeBindingProvider provider : providers) {
@@ -272,16 +311,16 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 						continue;
 					}
 					//all devices have a battery state, so this is type-independent
-					if (provider.getBindingType(itemName) == BindingType.BATTERY && device.isBatteryLowUpdated()) {
-						eventPublisher.postUpdate(itemName, device.getBatteryLow());
-					} 
-					
+					if (provider.getBindingType(itemName) == BindingType.BATTERY && device.battery().isChargeUpdated()) {
+						eventPublisher.postUpdate(itemName, device.battery().getCharge());
+					} else if  (provider.getBindingType(itemName) != BindingType.BATTERY) {
 					switch (device.getType()) {
 						case HeatingThermostatPlus:
 						case HeatingThermostat:
 							if (provider.getBindingType(itemName) == BindingType.VALVE
 									&& ((HeatingThermostat) device).isValvePositionUpdated()) {
 								eventPublisher.postUpdate(itemName, ((HeatingThermostat) device).getValvePosition());
+								break;
 							}
 							//omitted break, fall through
 						case WallMountedThermostat: // and also HeatingThermostat
@@ -291,7 +330,7 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 							} else if (provider.getBindingType(itemName) == BindingType.ACTUAL
 									&& ((HeatingThermostat) device).isTemperatureActualUpdated()) {
 								eventPublisher.postUpdate(itemName, ((HeatingThermostat) device).getTemperatureActual());
-							} else if (((HeatingThermostat) device).isTemperatureSetpointUpdated()){
+							} else if (((HeatingThermostat) device).isTemperatureSetpointUpdated() && provider.getBindingType(itemName) == null){
 								eventPublisher.postUpdate(itemName, ((HeatingThermostat) device).getTemperatureSetpoint());
 							}
 							break;
@@ -303,16 +342,19 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 						default:
 							// no further devices supported yet
 					}
+					}
 				}
 			}
 		} catch (UnknownHostException e) {
-			logger.info("Cannot establish connection with MAX!Cube lan gateway while connecting to '{}'", ip);
-			logger.debug(Utils.getStackTrace(e));
-			socket = null;
+			logger.info("Host error occurred while connecting to MAX! Cube lan gateway '{}': {}", ip, e.getMessage());
+			socketClose();
 		} catch (IOException e) {
-			logger.info("Cannot read data from MAX!Cube lan gateway while connecting to '{}'", ip);
-			logger.debug(Utils.getStackTrace(e));
-			socket = null; //reconnect on next execution
+			logger.info("IO error occurred while connecting to MAX! Cube lan gateway '{}': {}", ip, e.getMessage());
+			socketClose(); //reconnect on next execution
+		} catch (Exception e) {
+			logger.info("Error occurred while connecting to MAX! Cube lan gateway '{}': {}", ip, e.getMessage());
+			logger.info(Utils.getStackTrace(e));
+			socketClose(); //reconnect on next execution
 		}
 	}
 
@@ -329,7 +371,7 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 		for (MaxCubeBindingProvider provider : providers) {
 			serialNumber = provider.getSerialNumber(itemName);
 
-			if (serialNumber.equals(null)) {
+			if (StringUtils.isBlank(serialNumber)) {
 				continue;
 			}
 
@@ -352,21 +394,28 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 					decimalType = OnOffType.ON.equals(command) ? DEFAULT_ON_TEMPERATURE : DEFAULT_OFF_TEMPERATURE;
 				}
 
-				S_Command cmd = new S_Command(rfAddress, device.getRoomId(), decimalType.doubleValue());
+				S_Command cmd = new S_Command(rfAddress, device.getRoomId(), ((HeatingThermostat) device).getMode(), decimalType.doubleValue());
 				commandString = cmd.getCommandString();
 			} else if (command instanceof StringType) {
 				String commandContent = command.toString().trim().toUpperCase();
+				S_Command cmd = null;
 				ThermostatModeType commandThermoType = null;
 				if (commandContent.contentEquals(ThermostatModeType.AUTOMATIC.toString())) {
 					commandThermoType = ThermostatModeType.AUTOMATIC;
+					cmd = new S_Command(rfAddress, device.getRoomId(), commandThermoType);
 				} else if (commandContent.contentEquals(ThermostatModeType.BOOST.toString())) {
 					commandThermoType = ThermostatModeType.BOOST;
+					Double setTemp = Double.parseDouble( ((HeatingThermostat) device).getTemperatureSetpoint().toString());
+					cmd = new S_Command(rfAddress, device.getRoomId(), commandThermoType, setTemp);
+				} else if (commandContent.contentEquals(ThermostatModeType.MANUAL.toString())) {
+					commandThermoType = ThermostatModeType.MANUAL;
+					Double setTemp = Double.parseDouble( ((HeatingThermostat) device).getTemperatureSetpoint().toString());
+					cmd = new S_Command(rfAddress, device.getRoomId(), commandThermoType, setTemp);
+					logger.debug("updates to MANUAL mode with temperature '{}'", setTemp);
 				} else {
-					logger.debug("Only updates to AUTOMATIC & BOOST supported, received value ;'{}'", commandContent);
+					logger.debug("Only updates to AUTOMATIC, MANUAL & BOOST supported, received value ;'{}'", commandContent);
 					continue;
 				}
-
-				S_Command cmd = new S_Command(rfAddress, device.getRoomId(), commandThermoType);
 				commandString = cmd.getCommandString();
 			}
 
@@ -383,16 +432,40 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 					writer.write(commandString);
 					logger.debug(commandString);
 					writer.flush();
+					
+					Message message = null;
+					String raw = reader.readLine();
+                    try {
+                        while (!this.messageProcessor.isMessageAvailable()) {
+                        	this.messageProcessor.addReceivedLine(raw);
+                            raw = reader.readLine();
+                        }
+
+                        message = this.messageProcessor.pull();
+                    } catch (Exception e) {
+                        logger.info("Error while handling response from MAX! Cube lan gateway!");
+                        logger.debug(Utils.getStackTrace(e));
+                        this.messageProcessor.reset();
+                    }
+					
+					if (message !=null) {
+						if (message.getType() == MessageType.S) {
+							sMessageProcessing((S_Message)message);
+						}}
 					if(!exclusive) {
 						socket.close();
 						socket = null;
 					}
 				} catch (UnknownHostException e) {
-					logger.warn("Cannot establish connection with MAX!cube lan gateway while sending command to '{}'", ip);
-					logger.debug(Utils.getStackTrace(e));
+					logger.info("Host error occurred while connecting to MAX! Cube lan gateway '{}': {}", ip, e.getMessage());
+					socketClose();
 				} catch (IOException e) {
-					logger.warn("Cannot write data from MAX!Cube lan gateway while connecting to '{}'", ip);
-					logger.debug(Utils.getStackTrace(e));
+					logger.info("IO error occurred while writing to MAX! Cube lan gateway '{}': {}", ip, e.getMessage());
+					socketClose(); //reconnect on next execution
+				} catch (Exception e) {
+					logger.info("Error occurred while writing to MAX! Cube lan gateway '{}': {}", ip, e.getMessage());
+					logger.info(Utils.getStackTrace(e));
+					socketClose(); //reconnect on next execution
 				}
 				logger.debug("Command Sent to {}", ip);
 			} else {
@@ -400,13 +473,39 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 			}
 		}
 	}
+
+	/**
+	 * Processes the S message and updates Duty Cycle & Free Memory Slots
+	 * @param S_Message message
+	 */
+	private void sMessageProcessing(S_Message message) {
+		dutyCycle =  message.getDutyCycle();
+		freeMemorySlots = message.getFreeMemorySlots();
+		if (message.isCommandDiscarded()) {
+			logger.info("Last Send Command discarded. Duty Cycle: {}, Free Memory Slots: {}",dutyCycle,freeMemorySlots);
+		} else
+			logger.debug("S message. Duty Cycle: {}, Free Memory Slots: {}",dutyCycle,freeMemorySlots);
+	}
 	
 	private boolean socketConnect() throws UnknownHostException, IOException {
 		socket = new Socket(ip, port);
+		socket.setSoTimeout(2000);
 		logger.debug("open new connection... to "+ip+" port "+port);
 		reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 		writer = new OutputStreamWriter(socket.getOutputStream());
+		requestCount = 0;
 		return true;
+	}
+
+	private void socketClose() {
+		if(socket!=null) {
+			try {
+				socket.close();
+			} catch (IOException e) {
+				// Ignore
+			}
+			socket = null;
+		}
 	}
 
 	private Device findDevice(String serialNumber, ArrayList<Device> devices) {
@@ -416,32 +515,6 @@ public class MaxCubeBinding extends AbstractActiveBinding<MaxCubeBindingProvider
 			}
 		}
 		return null;
-	}
-
-	/**
-	 * Processes the raw TCP data read from the MAX protocol, returning the
-	 * corresponding Message.
-	 * 
-	 * @param raw
-	 *            the raw data provided read from the MAX protocol
-	 * @return the correct message for the given raw data
-	 */
-	private Message processRawMessage(String raw) {
-
-		if (raw.startsWith("H:")) {
-			return new H_Message(raw);
-		} else if (raw.startsWith("M:")) {
-			return new M_Message(raw);
-		} else if (raw.startsWith("C:")) {
-			return new C_Message(raw);
-		} else if (raw.startsWith("L:")) {
-			return new L_Message(raw);
-		} else if (raw.startsWith("S:")) {
-			return new S_Message(raw);
-		} else {
-			logger.debug("Unknown message block: '{}'",raw);
-		}
-			return null;
 	}
 
 	/**

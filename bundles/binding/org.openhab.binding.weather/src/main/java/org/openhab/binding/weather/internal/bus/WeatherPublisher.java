@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2014, openHAB.org and others.
+ * Copyright (c) 2010-2015, openHAB.org and others.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -166,7 +166,11 @@ public class WeatherPublisher {
 	 * Returns true, if the cached value is equal to the new value.
 	 */
 	private boolean equalsCachedValue(Object value, String itemName) {
-		int cachedValueHashCode = ObjectUtils.hashCode(itemCache.get(itemName));
+		Object cachedValue = itemCache.get(itemName);
+		if (cachedValue == null && value != null) {
+			return false;
+		}
+		int cachedValueHashCode = ObjectUtils.hashCode(cachedValue);
 		int valueHashCode = ObjectUtils.hashCode(value);
 		return cachedValueHashCode == valueHashCode;
 	}

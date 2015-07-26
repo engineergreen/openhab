@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2014, openHAB.org and others.
+ * Copyright (c) 2010-2015, openHAB.org and others.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -8,6 +8,11 @@
  */
 package org.openhab.binding.pilight.internal.communication;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.codehaus.jackson.annotate.JsonAnySetter;
 import org.codehaus.jackson.annotate.JsonIgnoreProperties;
 import org.codehaus.jackson.annotate.JsonProperty;
 
@@ -20,7 +25,13 @@ import org.codehaus.jackson.annotate.JsonProperty;
 @JsonIgnoreProperties(ignoreUnknown=true)
 public class Device {
 	
-	private String name;
+	private String uuid;
+	
+	private String origin;
+	
+	private String timestamp;
+	
+	private List<String> protocol;
 	
 	private String state;
 	
@@ -30,16 +41,40 @@ public class Device {
 	
 	private Integer dimlevelMinimum;
 	
-	public Device() {
-		
+	private List<Map<String, String>> id;
+	
+	private Map<String,String> properties = new HashMap<String, String>();
+
+	public String getUuid() {
+		return uuid;
 	}
 
-	public String getName() {
-		return name;
+	public void setUuid(String uuid) {
+		this.uuid = uuid;
 	}
 
-	public void setName(String name) {
-		this.name = name;
+	public String getOrigin() {
+		return origin;
+	}
+
+	public void setOrigin(String origin) {
+		this.origin = origin;
+	}
+
+	public String getTimestamp() {
+		return timestamp;
+	}
+
+	public void setTimestamp(String timestamp) {
+		this.timestamp = timestamp;
+	}
+
+	public List<String> getProtocol() {
+		return protocol;
+	}
+
+	public void setProtocol(List<String> protocol) {
+		this.protocol = protocol;
 	}
 
 	public String getState() {
@@ -49,7 +84,7 @@ public class Device {
 	public void setState(String state) {
 		this.state = state;
 	}
-
+	
 	public Integer getDimlevel() {
 		return dimlevel;
 	}
@@ -75,4 +110,25 @@ public class Device {
 	public void setDimlevelMinimum(Integer dimlevelMinimum) {
 		this.dimlevelMinimum = dimlevelMinimum;
 	}
+
+	public List<Map<String, String>> getId() {
+		return id;
+	}
+
+	public void setId(List<Map<String, String>> id) {
+		this.id = id;
+	}
+	
+	public void setProperties(Map<String, String> properties) {
+		this.properties = properties;
+	}
+	
+	public Map<String, String> getProperties() {
+		return properties;
+	}
+	
+	@JsonAnySetter
+    public void set(String name, Object value) {
+    	properties.put(name, value.toString());
+    }
 }

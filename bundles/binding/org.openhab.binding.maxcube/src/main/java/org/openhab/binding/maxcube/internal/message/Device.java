@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2014, openHAB.org and others.
+ * Copyright (c) 2010-2015, openHAB.org and others.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -13,8 +13,8 @@ import java.util.Calendar;
 import java.util.List;
 
 import org.openhab.binding.maxcube.internal.Utils;
+import org.openhab.binding.maxcube.internal.message.Battery.Charge;
 import org.openhab.core.library.types.OpenClosedType;
-import org.openhab.core.library.types.StringType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,8 +33,7 @@ public abstract class Device {
 	private String rfAddress = "";
 	private int roomId = -1;
 
-	private boolean batteryLow;
-	private boolean batteryLowUpdated;
+	private final Battery battery = new Battery();
 
 	private boolean initialized;
 	private boolean answer;
@@ -94,6 +93,7 @@ public abstract class Device {
 		Device device = Device.create(rfAddress, configurations);
 		if (device == null) {
 			logger.warn("Can't create device from received message, returning NULL.");
+			return null;
 		}
 		
 		return Device.update(raw,configurations, device);
@@ -118,7 +118,7 @@ public abstract class Device {
 		device.setGatewayKnown(bits2[4]);
 		device.setPanelLocked(bits2[5]);
 		device.setLinkStatusError(bits2[6]);
-		device.setBatteryLow(bits2[7]);
+		device.battery().setCharge(bits2[7] ? Charge.LOW : Charge.OK);
 
 		logger.trace ("Device {} L Message length: {} content: {}", rfAddress,raw.length,Utils.getHex(raw));
 
@@ -165,8 +165,11 @@ public abstract class Device {
 					logger.debug ("No temperature reading in {} mode", heatingThermostat.getMode()) ;
 				}
 			}
-			logger.debug ("Actual Temperature : {}",  (double)actualTemp / 10);
-			heatingThermostat.setTemperatureActual((double)actualTemp / 10);
+			
+			if (actualTemp != 0) {
+				logger.debug ("Actual Temperature : {}",  (double)actualTemp / 10);
+				heatingThermostat.setTemperatureActual((double)actualTemp / 10);
+			}
 			break;
 		case EcoSwitch:
 			String eCoSwitchData = Utils.toHex(raw[3] & 0xFF, raw[4] & 0xFF, raw[5] & 0xFF);
@@ -192,22 +195,9 @@ public abstract class Device {
 		}
 		return device;
 	}
-
-	private final void setBatteryLow(boolean batteryLow) {
-		if(this.batteryLow != batteryLow) {
-			this.batteryLowUpdated = true;
-		}else {
-			this.batteryLowUpdated = false;
-		}
-		this.batteryLow = batteryLow;
-	}
-
-	public final StringType getBatteryLow() {
-		return new StringType(this.batteryLow ? "low" : "ok");
-	}
 	
-	public boolean isBatteryLowUpdated() {
-		return this.batteryLowUpdated;
+	public Battery battery(){
+		return battery;
 	}
 
 	public final String getRFAddress() {
