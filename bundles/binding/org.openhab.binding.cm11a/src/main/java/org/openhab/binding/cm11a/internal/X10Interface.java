@@ -230,6 +230,8 @@ public class X10Interface extends Thread implements SerialPortEventListener  {
 				serialPort = (SerialPort) portId.open("Openhab CM11A Binding", IO_PORT_OPEN_TIMEOUT);
 				serialPort.setSerialPortParams(4800, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE);
 				serialPort.setFlowControlMode(SerialPort.FLOWCONTROL_NONE);
+				serialPort.disableReceiveTimeout();
+				serialPort.enableReceiveThreshold(1);
 				
 				serialOutputStr = serialPort.getOutputStream();
 				serialOutput = new DataOutputStream(serialOutputStr);
